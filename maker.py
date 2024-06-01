@@ -6,37 +6,40 @@ from decimal import Decimal
 import config
 import pandas as pd
 import pandas_ta as ta 
+import csv
 
-# Gate io
+# Gate
 exchange = ccxt.gate({
-    'apiKey': config.API_KEY,
-    'secret': config.API_SECRET,
+    'apiKey': config.GAPI_KEY,
+    'secret': config.GAPI_SECRET,
 })
-
-# exchange.set_sandbox_mode(True)
 
 # Define strategy parameters
 symbol = 'XCAD_USDT'
-spread = 0.01  # 1%
+spread = 0.015  # 1.5%
 order_refresh_time = 75  # seconds
 order_amount = 15  # XCAD
 max_open_orders = 2
 max_retries = 5  
 retry_delay = 5 # Seconds
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, filename='market_maker.log', filemode='a',
-                    format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger()
+# Configure CSV logging
+csv_file = open('market_maker.csv', 'a', newline='')
+csv_writer = csv.writer(csv_file)
+
+def log_to_csv(level, message):
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    csv_writer.writerow([timestamp, level, message])
+    csv_file.flush()  # Flush the buffer to ensure data is written to the file
 
 def get_ohlcv(symbol, timeframe='1m', limit=100):
     for attempt in range(max_retries):
         try:
             return exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
         except Exception as e:
-            logger.error(f"Error fetching OHLCV data: {e}. Attempt {attempt + 1} of {max_retries}. Retrying in {retry_delay} seconds...")
+            log_to_csv('ERROR', f"Error fetching OHLCV data: {e}. Attempt {attempt + 1} of {max_retries}. Retrying in {retry_delay} seconds...")
             time.sleep(retry_delay)
-    logger.critical("Max retries reached. Failed to fetch OHLCV data.")
+    log_to_csv('CRITICAL', "Max retries reached. Failed to fetch OHLCV data.")
     return None
 
 def calculate_indicators(ohlcv):
@@ -56,8 +59,8 @@ def get_reference_price(indicators):
     
     # Adjust spreads based on NATR
     spread_factor = 1 + natr / 100
-    buy_price = ref_price * (1 - spread * spread_factor)
-    sell_price = ref_price * (1 + spread * spread_factor)
+    buy_price = ref_price * (1 - spread)
+    sell_price = ref_price * (1 + spread)
     
     return ref_price, buy_price, sell_price
 
@@ -65,12 +68,12 @@ def place_order(side, price, amount):
     for attempt in range(max_retries):
         try:
             order = exchange.create_limit_order(symbol, side, amount, price)
-            logger.info(f"Placed {side} order: ID={order['id']}, Price={order['price']}, Amount={order['amount']}")
+            log_to_csv('INFO', f"Placed {side} order: ID={order['id']}, Price={order['price']}, Amount={order['amount']}")
             return order
         except Exception as e:
-            logger.error(f"Error placing {side} order: {e}. Attempt {attempt + 1} of {max_retries}. Retrying in {retry_delay} seconds...")
+            log_to_csv('ERROR', f"Error placing {side} order: {e}. Attempt {attempt + 1} of {max_retries}. Retrying in {retry_delay} seconds...")
             time.sleep(retry_delay)
-    logger.critical(f"Max retries reached. Failed to place {side} order.")
+    log_to_csv('CRITICAL', f"Max retries reached. Failed to place {side} order.")
     return None
 
 def cancel_all_orders():
@@ -79,35 +82,45 @@ def cancel_all_orders():
             open_orders = exchange.fetch_open_orders(symbol)
             for order in open_orders:
                 exchange.cancel_order(order['id'], symbol)
-                logger.info(f"Canceled order: ID={order['id']}, Price={order['price']}, Amount={order['amount']}")
+                log_to_csv('INFO', f"Canceled order: ID={order['id']}, Price={order['price']}, Amount={order['amount']}")
             return
         except Exception as e:
-            logger.error(f"Error cancelling orders: {e}. Attempt {attempt + 1} of {max_retries}. Retrying in {retry_delay} seconds...")
+            log_to_csv('ERROR', f"Error cancelling orders: {e}. Attempt {attempt + 1} of {max_retries}. Retrying in {retry_delay} seconds...")
             time.sleep(retry_delay)
-    logger.critical("Max retries reached. Failed to cancel all orders.")
+    log_to_csv('CRITICAL', "Max retries reached. Failed to cancel all orders.")
 
 def main():
-    while True:
-        ohlcv = get_ohlcv(symbol)
-        if ohlcv is None:
-            logger.critical("Failed to fetch OHLCV data. Exiting...")
-            break
-        
-        indicators = calculate_indicators(ohlcv)
-        
-        ref_price, buy_price, sell_price = get_reference_price(indicators)
-        
-        cancel_all_orders()
-        
-        buy_order = place_order('buy', buy_price, order_amount)
-        sell_order = place_order('sell', sell_price, order_amount)
-        
-        if buy_order:
-            logger.info(f"Buy Order: ID={buy_order['id']}, Price={buy_order['price']}, Amount={buy_order['amount']}")
-        if sell_order:
-            logger.info(f"Sell Order: ID={sell_order['id']}, Price={sell_order['price']}, Amount={sell_order['amount']}")
-        
-        time.sleep(order_refresh_time)
+    try:
+        while True:
+            ohlcv = get_ohlcv(symbol)
+            if ohlcv is None:
+                log_to_csv('CRITICAL', "Failed to fetch OHLCV data. Exiting...")
+                break
+            
+            indicators = calculate_indicators(ohlcv)
+            
+            ref_price, buy_price, sell_price = get_reference_price(indicators)
+            
+            # Calculate spread percentage
+            spread_percentage = ((sell_price - buy_price) / ref_price) * 100
+            
+            # Check if spread exceeds 1.5%
+            if spread_percentage >= 1.5:
+                cancel_all_orders()
+                
+                buy_order = place_order('buy', buy_price, order_amount)
+                sell_order = place_order('sell', sell_price, order_amount)
+                
+                if buy_order:
+                    log_to_csv('INFO', f"Buy Order: ID={buy_order['id']}, Price={buy_order['price']}, Amount={buy_order['amount']}")
+                if sell_order:
+                    log_to_csv('INFO', f"Sell Order: ID={sell_order['id']}, Price={sell_order['price']}, Amount={sell_order['amount']}")
+            else:
+                log_to_csv('INFO', f"Spread ({spread_percentage:.2f}%) is less than 1.5%. Not placing orders.")
+            
+            time.sleep(order_refresh_time)
+    finally:
+        csv_file.close()  # Close the CSV file when done
 
 if __name__ == "__main__":
     main()
