@@ -1,6 +1,5 @@
 import ccxt
 import time
-import logging
 from datetime import datetime
 from decimal import Decimal
 import config
@@ -16,12 +15,15 @@ exchange = ccxt.gate({
 
 # Define strategy parameters
 symbol = 'XCAD_USDT'
-spread = 0.015  # 1.5%
+spread = 0.013  # 1.3%
 order_refresh_time = 75  # seconds
 order_amount = 15  # XCAD
 max_open_orders = 2
 max_retries = 5  
 retry_delay = 5 # Seconds
+
+# Flags
+sell_order_fulfilled = False
 
 # Configure CSV logging
 csv_file = open('market_maker.csv', 'a', newline='')
@@ -90,6 +92,8 @@ def cancel_all_orders():
     log_to_csv('CRITICAL', "Max retries reached. Failed to cancel all orders.")
 
 def main():
+    global sell_order_fulfilled
+    
     try:
         while True:
             ohlcv = get_ohlcv(symbol)
@@ -104,23 +108,35 @@ def main():
             # Calculate spread percentage
             spread_percentage = ((sell_price - buy_price) / ref_price) * 100
             
-            # Check if spread exceeds 1.5%
-            if spread_percentage >= 1.5:
+            # Check if spread exceeds 1.3%
+            if spread_percentage >= 1.3:
                 cancel_all_orders()
                 
-                buy_order = place_order('buy', buy_price, order_amount)
-                sell_order = place_order('sell', sell_price, order_amount)
+                if sell_order_fulfilled:
+                    # Check if price increased since sell order was placed
+                    # If yes, use funds from sell order to buy XCAD again
+                    if ref_price > sell_price:
+                        buy_order = place_order('buy', buy_price, order_amount)
+                        if buy_order:
+                            log_to_csv('INFO', f"Using funds from sell order to place a buy order: ID={buy_order['id']}, Price={buy_order['price']}, Amount={buy_order['amount']}")
+                    else:
+                        log_to_csv('INFO', "Price didn't increase since the sell order. Not placing a buy order.")
+                    
+                    sell_order_fulfilled = False
+                else:
+                    buy_order = place_order('buy', buy_price, order_amount)
+                    sell_order = place_order('sell', sell_price, order_amount)
                 
-                if buy_order:
-                    log_to_csv('INFO', f"Buy Order: ID={buy_order['id']}, Price={buy_order['price']}, Amount={buy_order['amount']}")
-                if sell_order:
-                    log_to_csv('INFO', f"Sell Order: ID={sell_order['id']}, Price={sell_order['price']}, Amount={sell_order['amount']}")
+                    if buy_order:
+                        log_to_csv('INFO', f"Buy Order: ID={buy_order['id']}, Price={buy_order['price']}, Amount={buy_order['amount']}")
+                    if sell_order:
+                        log_to_csv('INFO', f"Sell Order: ID={sell_order['id']}, Price={sell_order['price']}, Amount={sell_order['amount']}")
             else:
                 log_to_csv('INFO', f"Spread ({spread_percentage:.2f}%) is less than 1.5%. Not placing orders.")
             
             time.sleep(order_refresh_time)
     finally:
-        csv_file.close()  # Close the CSV file when done
+        csv_file.close()  
 
 if __name__ == "__main__":
     main()
