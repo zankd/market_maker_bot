@@ -10,8 +10,8 @@ import csv
 
 # Gate
 exchange = ccxt.gate({
-    'apiKey': config.GAPI_KEY,
-    'secret': config.GAPI_SECRET,
+    'apiKey': config.API_KEY,
+    'secret': config.API_SECRET,
 })
 
 # Define strategy parameters
