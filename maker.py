@@ -10,8 +10,8 @@ import csv
 
 # Gate
 exchange = ccxt.gate({
-    'apiKey': config.API_KEY,
-    'secret': config.API_SECRET,
+    'apiKey': config.GAPI_KEY,
+    'secret': config.GAPI_SECRET,
 })
 
 # Define strategy parameters
@@ -22,6 +22,7 @@ order_amount = 15  # XCAD
 max_open_orders = 2
 max_retries = 5
 retry_delay = 5  # Seconds
+replenishment_threshold = 0.02  # 2% price change for replenishment
 
 # Configure CSV logging
 csv_file = open('market_maker.csv', 'a', newline='')
@@ -89,7 +90,7 @@ def cancel_all_orders():
             time.sleep(retry_delay)
     log_to_csv('CRITICAL', "Max retries reached. Failed to cancel all orders.")
 
-def check_and_replenish_funds():
+def check_and_replenish_funds(last_order, last_order_price):
     try:
         balance = exchange.fetch_balance()
         asset_balance = balance['total']['XCAD']
@@ -98,17 +99,18 @@ def check_and_replenish_funds():
         ticker = exchange.fetch_ticker(symbol)
         current_price = ticker['last']
         
-        # If USDT balance is low, sell XCAD
-        if usdt_balance < order_amount * current_price:
-            if asset_balance >= order_amount:
-                place_order('sell', current_price, order_amount)
-                log_to_csv('INFO', f"Placed replenishment sell order at {current_price} due to low USDT balance.")
+        replenishment_threshold = 0.01  # 1% above or below the last order price
         
-        # If XCAD balance is low, buy XCAD
-        if asset_balance < order_amount:
-            if usdt_balance >= order_amount * current_price:
-                place_order('buy', current_price, order_amount)
-                log_to_csv('INFO', f"Placed replenishment buy order at {current_price} due to low XCAD balance.")
+        if last_order == 'buy' and usdt_balance < order_amount * current_price:
+            replenishment_sell_price = last_order_price * (1 + replenishment_threshold)
+            if current_price > replenishment_sell_price:
+                place_order('sell', replenishment_sell_price, order_amount)
+                log_to_csv('INFO', f"Placed replenishment sell order at {replenishment_sell_price} due to low USDT balance.")
+        elif last_order == 'sell' and asset_balance < order_amount:
+            replenishment_buy_price = last_order_price * (1 - replenishment_threshold)
+            if current_price < replenishment_buy_price:
+                place_order('buy', replenishment_buy_price, order_amount)
+                log_to_csv('INFO', f"Placed replenishment buy order at {replenishment_buy_price} due to low XCAD balance.")
     except Exception as e:
         log_to_csv('ERROR', f"Error checking/replenishing funds: {e}")
 
@@ -138,6 +140,9 @@ def check_funds_and_place_orders(buy_price, sell_price):
     return buy_order, sell_order
 
 def main():
+    last_order = None
+    last_order_price = None
+
     try:
         while True:
             ohlcv = get_ohlcv(symbol)
@@ -160,12 +165,16 @@ def main():
                 
                 if buy_order:
                     log_to_csv('INFO', f"Buy Order: ID={buy_order['id']}, Price={buy_order['price']}, Amount={buy_order['amount']}")
+                    last_order = 'buy'
+                    last_order_price = buy_order['price']
                 if sell_order:
                     log_to_csv('INFO', f"Sell Order: ID={sell_order['id']}, Price={sell_order['price']}, Amount={sell_order['amount']}")
+                    last_order = 'sell'
+                    last_order_price = sell_order['price']
             else:
                 log_to_csv('INFO', f"Spread ({spread_percentage:.2f}%) is less than 1.3%. Not placing orders.")
             
-            check_and_replenish_funds()
+            check_and_replenish_funds(last_order, last_order_price)
             
             time.sleep(order_refresh_time)
     finally:
