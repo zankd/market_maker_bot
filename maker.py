@@ -10,19 +10,18 @@ import csv
 
 # Gate
 exchange = ccxt.gate({
-    'apiKey': config.GAPI_KEY,
-    'secret': config.GAPI_SECRET,
+    'apiKey': config.API_KEY,
+    'secret': config.API_SECRET,
 })
 
 # Define strategy parameters
 symbol = 'XCAD_USDT'
 spread = 0.013  # 1.3%
 order_refresh_time = 75  # seconds
-order_amount = 15  # XCAD
+order_amount = 10  # XCAD
 max_open_orders = 2
 max_retries = 5
 retry_delay = 5  # Seconds
-replenishment_threshold = 0.02  # 2% price change for replenishment
 
 # Configure CSV logging
 csv_file = open('market_maker.csv', 'a', newline='')
