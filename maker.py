@@ -1,10 +1,11 @@
 import ccxt
 import time
+import logging
 from datetime import datetime
 from decimal import Decimal
 import config
 import pandas as pd
-import pandas_ta as ta 
+import pandas_ta as ta
 import csv
 
 # Gate
@@ -19,11 +20,8 @@ spread = 0.013  # 1.3%
 order_refresh_time = 75  # seconds
 order_amount = 15  # XCAD
 max_open_orders = 2
-max_retries = 5  
-retry_delay = 5 # Seconds
-
-# Flags
-sell_order_fulfilled = False
+max_retries = 5
+retry_delay = 5  # Seconds
 
 # Configure CSV logging
 csv_file = open('market_maker.csv', 'a', newline='')
@@ -91,9 +89,55 @@ def cancel_all_orders():
             time.sleep(retry_delay)
     log_to_csv('CRITICAL', "Max retries reached. Failed to cancel all orders.")
 
-def main():
-    global sell_order_fulfilled
+def check_and_replenish_funds():
+    try:
+        balance = exchange.fetch_balance()
+        asset_balance = balance['total']['XCAD']
+        usdt_balance = balance['total']['USDT']
+        
+        ticker = exchange.fetch_ticker(symbol)
+        current_price = ticker['last']
+        
+        # If USDT balance is low, sell XCAD
+        if usdt_balance < order_amount * current_price:
+            if asset_balance >= order_amount:
+                place_order('sell', current_price, order_amount)
+                log_to_csv('INFO', f"Placed replenishment sell order at {current_price} due to low USDT balance.")
+        
+        # If XCAD balance is low, buy XCAD
+        if asset_balance < order_amount:
+            if usdt_balance >= order_amount * current_price:
+                place_order('buy', current_price, order_amount)
+                log_to_csv('INFO', f"Placed replenishment buy order at {current_price} due to low XCAD balance.")
+    except Exception as e:
+        log_to_csv('ERROR', f"Error checking/replenishing funds: {e}")
+
+def check_funds_and_place_orders(buy_price, sell_price):
+    balance = exchange.fetch_balance()
+    asset_balance = balance['total']['XCAD']
+    usdt_balance = balance['total']['USDT']
     
+    # Calculate required USDT for buy order
+    required_usdt = order_amount * buy_price
+    # Check if there's enough USDT to place buy order
+    if usdt_balance >= required_usdt:
+        buy_order = place_order('buy', buy_price, order_amount)
+    else:
+        log_to_csv('WARNING', "Not enough USDT balance to place buy order.")
+        buy_order = None
+    
+    # Check if there's enough XCAD to place sell order
+    if asset_balance >= order_amount:
+        # Increase the sell price slightly to avoid immediate fulfillment
+        sell_price = sell_price * 1.005
+        sell_order = place_order('sell', sell_price, order_amount)
+    else:
+        log_to_csv('WARNING', "Not enough XCAD balance to place sell order.")
+        sell_order = None
+
+    return buy_order, sell_order
+
+def main():
     try:
         while True:
             ohlcv = get_ohlcv(symbol)
@@ -112,31 +156,20 @@ def main():
             if spread_percentage >= 1.3:
                 cancel_all_orders()
                 
-                if sell_order_fulfilled:
-                    # Check if price increased since sell order was placed
-                    # If yes, use funds from sell order to buy XCAD again
-                    if ref_price > sell_price:
-                        buy_order = place_order('buy', buy_price, order_amount)
-                        if buy_order:
-                            log_to_csv('INFO', f"Using funds from sell order to place a buy order: ID={buy_order['id']}, Price={buy_order['price']}, Amount={buy_order['amount']}")
-                    else:
-                        log_to_csv('INFO', "Price didn't increase since the sell order. Not placing a buy order.")
-                    
-                    sell_order_fulfilled = False
-                else:
-                    buy_order = place_order('buy', buy_price, order_amount)
-                    sell_order = place_order('sell', sell_price, order_amount)
+                buy_order, sell_order = check_funds_and_place_orders(buy_price, sell_price)
                 
-                    if buy_order:
-                        log_to_csv('INFO', f"Buy Order: ID={buy_order['id']}, Price={buy_order['price']}, Amount={buy_order['amount']}")
-                    if sell_order:
-                        log_to_csv('INFO', f"Sell Order: ID={sell_order['id']}, Price={sell_order['price']}, Amount={sell_order['amount']}")
+                if buy_order:
+                    log_to_csv('INFO', f"Buy Order: ID={buy_order['id']}, Price={buy_order['price']}, Amount={buy_order['amount']}")
+                if sell_order:
+                    log_to_csv('INFO', f"Sell Order: ID={sell_order['id']}, Price={sell_order['price']}, Amount={sell_order['amount']}")
             else:
-                log_to_csv('INFO', f"Spread ({spread_percentage:.2f}%) is less than 1.5%. Not placing orders.")
+                log_to_csv('INFO', f"Spread ({spread_percentage:.2f}%) is less than 1.3%. Not placing orders.")
+            
+            check_and_replenish_funds()
             
             time.sleep(order_refresh_time)
     finally:
-        csv_file.close()  
+        csv_file.close()
 
 if __name__ == "__main__":
     main()
