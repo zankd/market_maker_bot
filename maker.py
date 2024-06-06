@@ -73,9 +73,12 @@ def get_reference_price(indicators):
     mid_price_shift = (rsi - 50) / 1000
     ref_price = last_close * (1 + mid_price_shift)
     
-    # Calculate buy and sell prices
-    buy_price = ref_price * (1 - spread)
-    sell_price = ref_price * (1 + spread)
+    # Adjust spread based on NATR (volatility)
+    dynamic_spread = spread * (1 + natr / 100)  # Example: increase spread by a factor of NATR
+    
+    # Calculate buy and sell prices with dynamic spread
+    buy_price = ref_price * (1 - dynamic_spread)
+    sell_price = ref_price * (1 + dynamic_spread)
     
     return ref_price, buy_price, sell_price
 
