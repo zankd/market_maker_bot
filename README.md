@@ -28,7 +28,7 @@ Before running the script, make sure to:
 5. Run the script using `python market_maker.py`.
 
 ## Logging
-The bot logs trade information and errors to a CSV file named `market_maker.csv`. Each log entry includes a timestamp, log level, and corresponding message.
+The bot logs trade information and errors to a CSV file named `market_maker.csv`. Each log entry includes a timestamp, log level, and the corresponding message.
 
 ## Disclaimer
 This bot is provided for educational purposes only and should not be considered financial advice. Cryptocurrency trading involves risk, and users should exercise caution and perform their own research before engaging in any trading activities.
