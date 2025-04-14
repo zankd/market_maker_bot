@@ -31,7 +31,7 @@ def log_to_csv(level, message):
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     csv_writer.writerow([timestamp, level, message])
     csv_file.flush()  # Flush the buffer to ensure data is written to the file
-    check_log_file_size()  # Check and truncate log file if needed
+    check_log_file_size()  # Truncate log file if needed
 
 def check_log_file_size():
     if os.path.getsize(log_file_path) > max_log_file_size:
